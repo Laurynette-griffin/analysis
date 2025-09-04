@@ -1,5 +1,4 @@
-#include "JetMatchingSubjets.h"
-#include "ZsjTools.h"
+#include "JetMatching.h"
 
 #include <fun4all/Fun4AllReturnCodes.h>
 #include <fun4all/PHTFileServer.h>
@@ -12,7 +11,7 @@
 
 #include <jetbase/JetContainer.h>
 #include <jetbase/Jet.h>
-#include <TVector2.h>  // for TVector2::Phi_mpi_pi
+#include <TVector2.h>  // has the 
 #include <jetbase/JetMap.h>
 
 #include <centrality/CentralityInfo.h>
@@ -41,29 +40,26 @@ namespace {
   }
 }
 
-JetMatchingSubjets::JetMatchingSubjets(const std::string& recojetname,
+JetMatching::JetMatching(const std::string& recojetname,
                                        const std::string& truthjetname,
                                        const std::string& outputfilename)
-: SubsysReco(std::string("JetMatchingSubjets_")+recojetname+"_"+truthjetname)
+: SubsysReco(std::string("JetMatching_")+recojetname+"_"+truthjetname)
 , m_recoJetName(recojetname)
 , m_truthJetName(truthjetname)
 , m_outputFileName(outputfilename)
 {}
 
-JetMatchingSubjets::~JetMatchingSubjets() {}
+JetMatching::~JetMatching() {}
 
-int JetMatchingSubjets::Init(PHCompositeNode*)
+int JetMatching::Init(PHCompositeNode*)
 {
   if (m_ptEdges.empty()) m_ptEdges = {5,10,15,20,25,30,35,40,45,50,55};
   m_nPtBins = (int)m_ptEdges.size() - 1;
   
-  if (m_zsjEdges.empty()) { const int n=10; for (int i=0;i<=n;++i) m_zsjEdges.push_back(0.5*i/n); }
-  m_nZsjBins = (int)m_zsjEdges.size() - 1;
-  
   PHTFileServer::get().open(m_outputFileName, "RECREATE");
   
   //TTree building
-  m_T = new TTree("T", "Jet matching for RooUnfold (pt and pt×z_sj)");
+  m_T = new TTree("T", "Jet matching (pt)");
   m_T->Branch("event", &m_event, "event/I");
   m_T->Branch("cent",  &m_centrality, "cent/F");
   m_T->Branch("b",     &m_b, "b/F");
@@ -72,70 +68,60 @@ int JetMatchingSubjets::Init(PHCompositeNode*)
   m_T->Branch("reco_pt",  &v_reco_pt);
   m_T->Branch("reco_eta", &v_reco_eta);
   m_T->Branch("reco_phi", &v_reco_phi);
-  m_T->Branch("reco_zsj", &v_reco_zsj);
-  m_T->Branch("reco_thetasj", &v_reco_thetasj);
   
   m_T->Branch("truth_pt",  &v_truth_pt);
   m_T->Branch("truth_eta", &v_truth_eta);
   m_T->Branch("truth_phi", &v_truth_phi);
-  m_T->Branch("truth_zsj", &v_truth_zsj);
-  m_T->Branch("truth_thetasj", &v_truth_thetasj);
+
   
   // matched pairs
   m_T->Branch("match_reco_pt",  &v_match_reco_pt);
   m_T->Branch("match_reco_eta", &v_match_reco_eta);
   m_T->Branch("match_reco_phi", &v_match_reco_phi);
-  m_T->Branch("match_reco_zsj", &v_match_reco_zsj);
-  m_T->Branch("match_reco_thetasj", &v_match_reco_thetasj);
+ 
   
   m_T->Branch("match_truth_pt",  &v_match_truth_pt);
   m_T->Branch("match_truth_eta", &v_match_truth_eta);
   m_T->Branch("match_truth_phi", &v_match_truth_phi);
-  m_T->Branch("match_truth_zsj", &v_match_truth_zsj);
-  m_T->Branch("match_truth_thetasj", &v_match_truth_thetasj);
   m_T->Branch("match_dR",        &v_match_dR);
 
   // fakes & misses
   m_T->Branch("fake_reco_pt",  &v_fake_reco_pt);
   m_T->Branch("fake_reco_eta", &v_fake_reco_eta);
   m_T->Branch("fake_reco_phi", &v_fake_reco_phi);
-  m_T->Branch("fake_reco_zsj", &v_fake_reco_zsj);
-  m_T->Branch("fake_reco_thetasj", &v_fake_reco_thetasj);
   
-  m_T->Branch("fake_truth_pt",  &v_fake_truth_pt);
-  m_T->Branch("fake_truth_eta", &v_fake_truth_eta);
-  m_T->Branch("fake_truth_phi", &v_fake_truth_phi);
-  m_T->Branch("fake_truth_zsj", &v_fake_truth_zsj);
-  m_T->Branch("fake_truth_thetasj", &v_fake_truth_thetasj);
+  m_T->Branch("miss_truth_pt",  &v_miss_truth_pt);
+  m_T->Branch("miss_truth_eta", &v_miss_truth_eta);
+  m_T->Branch("miss_truth_phi", &v_miss_truth_phi);
   
   return Fun4AllReturnCodes::EVENT_OK;
 }
-static inline double lookupZsjForReco(
-				      const Jet* r,
-				      const std::unordered_map<const Jet*, double>& zReco,
-				      double dr_tol = 0.2, double pt_tol = 0.5)
-{
-  auto it = zReco.find(r);
-  if (it != zReco.end()) return it->second;
-  
-  // Pointer aliasing fallback: match by ΔR and pT
-  const double eta = r->get_eta();
-  const double phi = r->get_phi();
-  double best_dr2 = 1e9; //start with something impossibly large such that the iterations can become smaller and smaller
-  double zr = std::numeric_limits<double>::quiet_NaN();
-  
-  for (const auto& kv : zReco) {
-    const Jet* rc = kv.first;
-    const double dphi = TVector2::Phi_mpi_pi(phi - rc->get_phi());
-    const double deta = eta - rc->get_eta();
-    const double dr2  = dphi*dphi + deta*deta;
-    if (dr2 <= dr_tol*dr_tol && std::abs(r->get_pt() - rc->get_pt()) <= pt_tol) {
-      if (dr2 < best_dr2) { best_dr2 = dr2; zr = kv.second; }
-    }
-  }
-  return zr; // may remain NaN if no match
-}
-
+/*THIS FINDS ZR I should def not do this		  static inline double lookupZsjForReco(
+										      const Jet* r,
+										      const std::unordered_map<const Jet*, double>& zReco,
+										      double dr_tol = 0.2, double pt_tol = 0.5)
+						{
+						  auto it = zReco.find(r);
+						  if (it != zReco.end()) return it->second;
+						  
+						  // Pointer aliasing fallback: match by ΔR and pT
+						  const double eta = r->get_eta();
+						  const double phi = r->get_phi();
+						  double best_dr2 = 1e9; //start with something impossibly large such that the iterations can become smaller and smaller
+						  double zr = std::numeric_limits<double>::quiet_NaN();
+						  
+						  for (const auto& kv : zReco) {
+						    const Jet* rc = kv.first;
+						    const double dphi = std::abs(phi - rc->get_phi());
+							if (dphi > M_PI) dphi = 2 * M_PI - dphi;
+							const double deta = eta - rc->get_eta();
+						    const double dr2  = dphi*dphi + deta*deta;
+						    if (dr2 <= dr_tol*dr_tol && std::abs(r->get_pt() - rc->get_pt()) <= pt_tol) {
+						    if (dr2 < best_dr2) { best_dr2 = dr2; }
+						    }
+						  }
+						}
+*/
 static Jet* matchRaw(const Jet* jcal, JetContainer* raw, const double dRmax=5e-2)
 {
   if (!jcal || !raw) return nullptr;
@@ -146,7 +132,8 @@ static Jet* matchRaw(const Jet* jcal, JetContainer* raw, const double dRmax=5e-2
   
   for (auto it = raw->begin(); it != raw->end(); ++it) {
     Jet* jr = *it;
-    const double dphi = TVector2::Phi_mpi_pi(phi - jr->get_phi());
+    const double dphi = std::abs(phi - rc->get_phi());
+	if (dphi > M_PI) dphi = 2 * M_PI - dphi;
     const double deta = eta - jr->get_eta();
     const double dr2  = dphi*dphi + deta*deta;
     if (dr2 < bestDR2) { bestDR2 = dr2; best = jr; }
@@ -154,19 +141,19 @@ static Jet* matchRaw(const Jet* jcal, JetContainer* raw, const double dRmax=5e-2
   return best;
 }
 
-int JetMatchingSubjets::process_event(PHCompositeNode* topNode)
+int JetMatching::process_event(PHCompositeNode* topNode)
 {
   ++m_event;
   int nRecoNoRaw = 0;
   
   // clear vectors
-  v_reco_pt.clear();  v_reco_eta.clear();  v_reco_phi.clear();  v_reco_zsj.clear(); v_reco_thetasj.clear();
-  v_truth_pt.clear(); v_truth_eta.clear(); v_truth_phi.clear(); v_truth_zsj.clear(); v_truth_thetasj.clear();
-  v_match_reco_pt.clear(); v_match_reco_eta.clear(); v_match_reco_phi.clear(); v_match_reco_zsj.clear(); v_match_reco_thetasj.clear();
-  v_match_truth_pt.clear(); v_match_truth_eta.clear(); v_match_truth_phi.clear(); v_match_truth_zsj.clear(); v_match_truth_thetasj.clear();
+  v_reco_pt.clear();  v_reco_eta.clear();  v_reco_phi.clear(); 
+  v_truth_pt.clear(); v_truth_eta.clear(); v_truth_phi.clear();
+  v_match_reco_pt.clear(); v_match_reco_eta.clear(); v_match_reco_phi.clear(); 
+  v_match_truth_pt.clear(); v_match_truth_eta.clear(); v_match_truth_phi.clear();
   v_match_dR.clear();
-  v_fake_reco_pt.clear(); v_fake_reco_eta.clear(); v_fake_reco_phi.clear(); v_fake_reco_zsj.clear(); v_fake_reco_thetasj.clear();
-  v_fake_truth_pt.clear(); v_fake_truth_eta.clear(); v_fake_truth_phi.clear(); v_fake_truth_zsj.clear(); v_fake_truth_thetasj.clear();
+  v_fake_reco_pt.clear(); v_fake_reco_eta.clear(); v_fake_reco_phi.clear();
+  v_miss_truth_pt.clear(); v_miss_truth_eta.clear(); v_miss_truth_phi.clear();
 
   recoToTruth.clear();
   truthToReco.clear();
@@ -183,7 +170,7 @@ int JetMatchingSubjets::process_event(PHCompositeNode* topNode)
   auto* bg    = findNode::getClass<TowerBackground>(topNode, "TowerInfoBackground_Sub1");
 
   if (!jetsReco || !jetsTruth || !cent || !em || !ih || !oh || !geomEM || !geomIH || !geomOH || !bg) {
-    std::cerr << "[JetMatchingSubjets] Missing node(s)." << std::endl;
+    std::cerr << "[JetMatching] Missing node(s)." << std::endl;
     return Fun4AllReturnCodes::ABORTRUN;
   }
 
@@ -211,17 +198,15 @@ int JetMatchingSubjets::process_event(PHCompositeNode* topNode)
   }
   
   if (!jetsRecoCal) {
-    std::cerr << "[JetMatchingSubjets] Missing calibrated jet node: " << m_recoJetName << "\n";
+    std::cerr << "[JetMatching] Missing calibrated jet node: " << m_recoJetName << "\n";
     return Fun4AllReturnCodes::ABORTEVENT;
   }
   if (!jetsRecoRaw) {
-    std::cerr << "[JetMatchingSubjets] Missing raw constituent jet node: " << m_recoConstituentJetNode << "\n";
+    std::cerr << "[JetMatching] Missing raw constituent jet node: " << m_recoConstituentJetNode << "\n";
     return Fun4AllReturnCodes::ABORTEVENT;
   }
   
   //  std::unordered_map<const Jet*, double> zReco;
-  std::unordered_map<const Jet*, double> zReco;
-  std::unordered_map<const Jet*, double> zTruth;
   std::unordered_map<const Jet*, double> thetaReco;
   std::unordered_map<const Jet*, double> thetaTruth;
   
@@ -266,8 +251,6 @@ int JetMatchingSubjets::process_event(PHCompositeNode* topNode)
     v_reco_zsj.push_back(static_cast<float>(z));
     v_reco_thetasj.push_back(static_cast<float>(th));
   }
-  std::cout << "[DBG] after reco cache: zReco.size=" << zReco.size()
-	    << " thetaReco.size=" << thetaReco.size() << '\n';
 
   // Truth jets
   for (auto j: *jetsTruth) {
@@ -302,11 +285,10 @@ int JetMatchingSubjets::process_event(PHCompositeNode* topNode)
     double zt = zTruth.count(t) ? zTruth[t] : NAN;
     double tht= thetaTruth.count(t) ? thetaTruth[t] : NAN;
     
-    v_fake_truth_pt.push_back(t->get_pt());
-    v_fake_truth_eta.push_back(t->get_eta());
-    v_fake_truth_phi.push_back(t->get_phi());
-    v_fake_truth_zsj.push_back(zt);
-    v_fake_truth_thetasj.push_back(tht);
+    v_miss_truth_pt.push_back(t->get_pt());
+    v_miss_truth_eta.push_back(t->get_eta());
+    v_miss_truth_phi.push_back(t->get_phi());
+
   }
 
   // --- Matched ---
@@ -324,23 +306,9 @@ int JetMatchingSubjets::process_event(PHCompositeNode* topNode)
     v_match_truth_pt .push_back(t->get_pt());
     v_match_truth_eta.push_back(t->get_eta());
     v_match_truth_phi.push_back(t->get_phi());
-    double zt = zTruth.count(t) ? zTruth[t] : std::numeric_limits<double>::quiet_NaN();
-    v_match_truth_zsj.push_back(zt);
-    double tht = thetaTruth.count(t) ? thetaTruth[t] : std::numeric_limits<double>::quiet_NaN();
-    v_match_truth_thetasj.push_back(tht);
-    
     // inside matched loop, before lookup
     auto it = zReco.find(r);
     std::cout << "r@" << r << " in-cache? " << (it!=zReco.end()) << "   cache size=" << zReco.size() << '\n';
-    
-    double zr = lookupZsjForReco(r, zReco, 0.01, 0.1);  // no third argument now
-    v_match_reco_zsj.push_back(std::isfinite(zr) ? zr : std::numeric_limits<float>::quiet_NaN());
-    double thr = lookupZsjForReco(r, thetaReco, 0.01, 0.1);
-    v_match_reco_thetasj.push_back(std::isfinite(thr) ? thr : std::numeric_limits<float>::quiet_NaN());
-    // optional debug
-    std::cout << "match truth z_sj = " << zt << "\nmatch reco z_sj = " << zr << std::endl;
-    std::cout << "match truth theta_sj = " << tht << "\nmatch reco theta_sj = " << thr << std::endl;
-    
   }
   
   // --- Fakes (reco-only): iterate the SAME calibrated container used to build zReco ---
@@ -358,14 +326,6 @@ int JetMatchingSubjets::process_event(PHCompositeNode* topNode)
     v_fake_reco_eta.push_back(r->get_eta());
     v_fake_reco_phi.push_back(r->get_phi());
     
-    //double zr = lookupZsjForReco(r, zReco, DeltaR);
-    double zr = lookupZsjForReco(r, zReco, 0.01, 0.1);  // no third argument now
-    v_fake_reco_zsj.push_back(std::isfinite(zr) ? zr : std::numeric_limits<float>::quiet_NaN());
-    double thr = lookupZsjForReco(r, thetaReco, 0.01, 0.1);
-    v_fake_reco_thetasj.push_back(std::isfinite(thr) ? thr : std::numeric_limits<float>::quiet_NaN());
-    if (std::isnan(zr) || std::isnan(thr)) {
-      ++nLookupNaN;
-    }
   }
   std::cout << "[Evt " << m_event << "] "
 	    << "RecoNoRaw=" << nRecoNoRaw	    
@@ -375,7 +335,7 @@ int JetMatchingSubjets::process_event(PHCompositeNode* topNode)
   m_T->Fill();
   return Fun4AllReturnCodes::EVENT_OK;
 }
-int JetMatchingSubjets::End(PHCompositeNode*)
+int JetMatching::End(PHCompositeNode*)
 {
   PHTFileServer::get().cd(m_outputFileName);
   if (m_T) { m_T->Write(); m_T = nullptr; }
@@ -390,8 +350,8 @@ int JetMatchingSubjets::End(PHCompositeNode*)
   return Fun4AllReturnCodes::EVENT_OK;
 }
 
-int JetMatchingSubjets::Reset(PHCompositeNode*) { return Fun4AllReturnCodes::EVENT_OK; }
-void JetMatchingSubjets::Print(const std::string& what) const { }
+int JetMatching::Reset(PHCompositeNode*) { return Fun4AllReturnCodes::EVENT_OK; }
+void JetMatching::Print(const std::string& what) const { }
   
 // ---- helper definitions ----
 static inline float wrapPhi(float dphi){
@@ -400,14 +360,14 @@ static inline float wrapPhi(float dphi){
   return dphi; 
 }
 
-float JetMatchingSubjets::DeltaR(Jet* a, Jet* b)
+float JetMatching::DeltaR(Jet* a, Jet* b)
 {
   const float dEta = a->get_eta() - b->get_eta(); 
   float dPhi = wrapPhi(a->get_phi() - b->get_phi());
   return std::sqrt(dEta*dEta + dPhi*dPhi);
 }
 
-void JetMatchingSubjets::MatchJets1to1(JetContainer* recoJets, JetContainer* truthJets)
+void JetMatching::MatchJets1to1(JetContainer* recoJets, JetContainer* truthJets)
 {
   struct Pair { float dr; Jet* r; Jet* t; };  
   std::vector<Pair> cand;
