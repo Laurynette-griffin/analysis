@@ -23,10 +23,10 @@ class CentralityInfo;
 class JetMatching : public SubsysReco
 {
 public:
-  JetMatchingSubjets(const std::string& recojetname,
+  JetMatching(const std::string& recojetname,
                      const std::string& truthjetname,
                      const std::string& outputfilename);
-  ~JetMatchingSubjets() override;
+  ~JetMatching() override;
 
   // Config
   void setEtaRange(double low, double high) { m_etaRange = {low, high}; }
