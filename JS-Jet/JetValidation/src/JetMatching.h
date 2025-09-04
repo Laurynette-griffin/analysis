@@ -1,5 +1,5 @@
-#ifndef JETMATCHINGSUBJETS_H
-#define JETMATCHINGSUBJETS_H
+#ifndef JETMATCHING_H
+#define JETMATCHING_H
 
 #include <fun4all/SubsysReco.h>
 #include <limits>
@@ -20,7 +20,7 @@ class Jet;
 class JetContainer;
 class CentralityInfo;
 
-class JetMatchingSubjets : public SubsysReco
+class JetMatching : public SubsysReco
 {
 public:
   JetMatchingSubjets(const std::string& recojetname,
@@ -34,7 +34,6 @@ public:
   void setTruthPtMin(double x) { m_truthPtMin = x; }
   void setMatchDRMax(double x) { m_matchDRMax = x; }
   void setPtBinning(const std::vector<double>& edges) { m_ptEdges = edges; }
-  void setZsjBinning(const std::vector<double>& edges) { m_zsjEdges = edges; }
   void setZWindow(float zmin, float zmax) { m_zmin = zmin; m_zmax = zmax; }
   void setRecoConstituentJetNode(const std::string& n) { m_recoConstituentJetNode = n; }
   
@@ -65,9 +64,7 @@ private:
 
   // Binning
   std::vector<double> m_ptEdges;   // default set in Init()
-  std::vector<double> m_zsjEdges;  // default set in Init()
   int m_nPtBins  = 0;
-  int m_nZsjBins = 0;
 
   // Matching maps (1↔1 greedy)
   std::map<Jet*, Jet*> recoToTruth;
@@ -94,17 +91,17 @@ private:
   void setSampleName(const std::string& n) { m_sample_name = n; }
   
   // Per-event containers
-  std::vector<float> v_reco_pt,  v_reco_eta,  v_reco_phi,  v_reco_zsj, v_reco_thetasj;
-  std::vector<float> v_truth_pt, v_truth_eta, v_truth_phi, v_truth_zsj, v_truth_thetasj;
+  std::vector<float> v_reco_pt,  v_reco_eta,  v_reco_phi;
+  std::vector<float> v_truth_pt, v_truth_eta, v_truth_phi;
 
   // Matched pairs (parallel arrays, same length)
-  std::vector<float> v_match_reco_pt,  v_match_reco_eta,  v_match_reco_phi,  v_match_reco_zsj, v_match_reco_thetasj;
-  std::vector<float> v_match_truth_pt, v_match_truth_eta, v_match_truth_phi, v_match_truth_zsj, v_match_truth_thetasj;
+  std::vector<float> v_match_reco_pt,  v_match_reco_eta,  v_match_reco_phi;
+  std::vector<float> v_match_truth_pt, v_match_truth_eta, v_match_truth_phi;
   std::vector<float> v_match_dR;
 
   // Fakes / Misses
-  std::vector<float> v_fake_reco_pt,  v_fake_reco_eta,  v_fake_reco_phi,  v_fake_reco_zsj, v_fake_reco_thetasj;   // detector-only (no match)
-  std::vector<float> v_fake_truth_pt, v_fake_truth_eta, v_fake_truth_phi, v_fake_truth_zsj, v_fake_truth_thetasj;  // truth-only (missed)
+  std::vector<float> v_fake_reco_pt,  v_fake_reco_eta,  v_fake_reco_phi;   // detector-only (no match)
+  std::vector<float> v_fake_truth_pt, v_fake_truth_eta, v_fake_truth_phi;  // truth-only (missed)
 };
 
 #endif
